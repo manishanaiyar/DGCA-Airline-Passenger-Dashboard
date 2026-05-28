@@ -1,5 +1,7 @@
 streamlit
-langchain-google-genai
-langgraph
-playwright
 pandas
+langchain-google-genai
+python-dotenv
+pypdf
+langgraph
+requests
