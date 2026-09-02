@@ -1,6 +1,7 @@
 import sqlite3
 import json
 import os
+import sys
 import tempfile
 from typing import TypedDict
 
@@ -27,7 +28,7 @@ class AgentState(TypedDict):
     parsed_data: list
 
 
-def scrape_daily_data(state: AgentState):
+def scrape_dgca_data(state: AgentState):
     print("🚀 Fetching directly from DGCA's AWS S3 Bucket...")
     year = state["year_period"]
     s3_url = (
@@ -36,9 +37,20 @@ def scrape_daily_data(state: AgentState):
     )
 
     print(f"📥 Downloading PDF for {year}...")
-    res = requests.get(s3_url, timeout=30)  # SSL verification stays ON
-    if res.status_code != 200:
-        raise Exception(f"Failed to download from S3 for year '{year}'. Status: {res.status_code}")
+    try:
+        res = requests.get(s3_url, timeout=30)  # SSL verification stays ON
+        res.raise_for_status()
+    except requests.RequestException as e:
+        raise RuntimeError(f"Could not download DGCA report for {year}: {e}")
+
+    # Some misconfigurations (e.g. an S3 "Access Denied" XML page) can come back
+    # with a 200 status, so double-check we actually got a PDF before parsing it.
+    content_type = res.headers.get("Content-Type", "")
+    if "pdf" not in content_type.lower() and not res.content.startswith(b"%PDF"):
+        raise ValueError(
+            f"DGCA server did not return a PDF file for {year} "
+            f"(Content-Type: '{content_type or 'unknown'}')."
+        )
 
     # Unique temp file per run so concurrent users/requests never collide
     tmp_fd, pdf_path = tempfile.mkstemp(suffix=".pdf")
@@ -53,15 +65,18 @@ def scrape_daily_data(state: AgentState):
         section_pages = []
         collecting = False
         for page in reader.pages:
-            page_text = (page.extract_text() or "").lower()
+            page_text = page.extract_text() or ""
+            page_text_lower = page_text.lower()
 
-            if not collecting and START_SECTION_KEYWORD in page_text:
+            if not collecting and START_SECTION_KEYWORD in page_text_lower:
                 collecting = True
 
+            if collecting and END_SECTION_KEYWORD in page_text_lower and len(section_pages) >= 1:
+                break  # hit the next section — stop BEFORE including this page
+
             if collecting:
+                # Keep original casing (airline names like "IndiGo") instead of lowercasing everything
                 section_pages.append(page_text)
-                if END_SECTION_KEYWORD in page_text and len(section_pages) > 1:
-                    break  # hit the next section, stop here
                 if len(section_pages) >= MAX_SECTION_PAGES:
                     break  # safety cap
 
@@ -71,7 +86,8 @@ def scrape_daily_data(state: AgentState):
                 "DGCA may have changed the report layout."
             )
 
-        return {"raw_text": "".join(section_pages)}
+        # Page-break markers help the LLM understand table boundaries
+        return {"raw_text": "\n\n--- PAGE BREAK ---\n\n".join(section_pages)}
     finally:
         if os.path.exists(pdf_path):
             os.remove(pdf_path)
@@ -107,9 +123,18 @@ Text: {state['raw_text']}
     if not isinstance(parsed, list):
         raise Exception("Gemini's JSON was not a list as expected.")
 
+    required_keys = {
+        "airline_name", "passengers_carried",
+        "yoy_growth_passengers", "plf_percent", "yoy_growth_plf",
+    }
+
     valid_rows = []
     for row in parsed:
         if not isinstance(row, dict):
+            continue
+        # Enforce the exact schema we asked Gemini for — reject rows with
+        # missing or unexpected extra keys instead of silently accepting them.
+        if set(row.keys()) != required_keys:
             continue
 
         name = row.get("airline_name")
@@ -121,6 +146,9 @@ Text: {state['raw_text']}
         if not isinstance(name, str) or not name.strip():
             continue
         if not isinstance(passengers, (int, float)) or passengers < 0:
+            continue
+        # Reject non-whole passenger counts instead of silently truncating them
+        if isinstance(passengers, float) and not passengers.is_integer():
             continue
         if plf is not None and (not isinstance(plf, (int, float)) or not (0 <= plf <= 100)):
             continue
@@ -143,35 +171,34 @@ def save_to_database(state: AgentState):
     if not os.path.exists(DB_PATH):
         create_database()
 
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
     saved = 0
-    for row in state["parsed_data"]:
-        # UPSERT: naya/corrected data aane par purana row overwrite ho jayega,
-        # silently ignore nahi hoga (jaise pehle INSERT OR IGNORE karta tha)
-        c.execute('''
-            INSERT INTO aviation_data
-                (airline_name, passengers_carried, yoy_growth_passengers, plf_percent, yoy_growth_plf, year_period)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(airline_name, year_period) DO UPDATE SET
-                passengers_carried = excluded.passengers_carried,
-                yoy_growth_passengers = excluded.yoy_growth_passengers,
-                plf_percent = excluded.plf_percent,
-                yoy_growth_plf = excluded.yoy_growth_plf
-        ''', (
-            row.get("airline_name"), row.get("passengers_carried"),
-            row.get("yoy_growth_passengers"), row.get("plf_percent"),
-            row.get("yoy_growth_plf"), state["year_period"]
-        ))
-        saved += 1
-    conn.commit()
-    conn.close()
+    with sqlite3.connect(DB_PATH) as conn:
+        c = conn.cursor()
+        for row in state["parsed_data"]:
+            # UPSERT: naya/corrected data aane par purana row overwrite ho jayega,
+            # silently ignore nahi hoga (jaise pehle INSERT OR IGNORE karta tha)
+            c.execute('''
+                INSERT INTO aviation_data
+                    (airline_name, passengers_carried, yoy_growth_passengers, plf_percent, yoy_growth_plf, year_period)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(airline_name, year_period) DO UPDATE SET
+                    passengers_carried = excluded.passengers_carried,
+                    yoy_growth_passengers = excluded.yoy_growth_passengers,
+                    plf_percent = excluded.plf_percent,
+                    yoy_growth_plf = excluded.yoy_growth_plf
+            ''', (
+                row.get("airline_name"), row.get("passengers_carried"),
+                row.get("yoy_growth_passengers"), row.get("plf_percent"),
+                row.get("yoy_growth_plf"), state["year_period"]
+            ))
+            saved += 1
+        conn.commit()
     print(f"✅ Saved/updated {saved} rows for {state['year_period']}")
     return state
 
 
 workflow = StateGraph(AgentState)
-workflow.add_node("scrape", scrape_daily_data)
+workflow.add_node("scrape", scrape_dgca_data)
 workflow.add_node("parse", parse_with_gemini)
 workflow.add_node("save", save_to_database)
 workflow.set_entry_point("scrape")
@@ -182,6 +209,9 @@ workflow.add_edge("save", END)
 app = workflow.compile()
 
 if __name__ == "__main__":
-    inputs = {"year_period": "2024-25"}
+    # Optional CLI arg lets you fetch any year, e.g. `python agent_scraper.py 2023-24`.
+    # Defaults to 2024-25 if nothing is passed.
+    year_arg = sys.argv[1] if len(sys.argv) > 1 else "2024-25"
+    inputs = {"year_period": year_arg}
     app.invoke(inputs)
-    print("✅ Scrape Complete! Database is updated.")
+    print(f"✅ Scrape Complete! Database is updated for {year_arg}.")

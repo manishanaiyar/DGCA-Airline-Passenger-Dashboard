@@ -20,10 +20,8 @@ if not os.path.exists(DB_PATH):
 
 @st.cache_data
 def load_data():
-    conn = sqlite3.connect(DB_PATH)
-    df = pd.read_sql_query("SELECT * FROM aviation_data", conn)
-    conn.close()
-    return df
+    with sqlite3.connect(DB_PATH) as conn:
+        return pd.read_sql_query("SELECT * FROM aviation_data", conn)
 
 
 try:
@@ -48,7 +46,7 @@ if st.sidebar.button("Get Data"):
         with st.spinner(f"AI Agent fetching {new_year} from DGCA S3..."):
             try:
                 scraper_app.invoke({"year_period": new_year})
-                st.sidebar.success(f"✅ Data for {new_year} added to DB!")
+                st.sidebar.success(f"✅ Data for {new_year} fetched and saved successfully!")
                 st.cache_data.clear()
                 st.rerun()
             except Exception as e:
@@ -84,10 +82,19 @@ with col1:
 
 with col2:
     st.subheader("Passengers Carried by Airline")
-    if not filtered_df.empty:
-        st.bar_chart(filtered_df, x="airline_name", y="passengers_carried")
-    else:
+    if filtered_df.empty:
         st.info("No data available for this filter.")
+    elif selected_year == "All Years":
+        # A plain bar chart across all years would repeat each airline once per
+        # year, which reads as confusing duplicate labels — a line chart per
+        # airline across years communicates the trend far more clearly.
+        chart_df = filtered_df.pivot_table(
+            index="year_period", columns="airline_name",
+            values="passengers_carried", aggfunc="sum"
+        )
+        st.line_chart(chart_df)
+    else:
+        st.bar_chart(filtered_df, x="airline_name", y="passengers_carried")
 
 st.divider()
 
@@ -97,7 +104,14 @@ st.subheader("🤖 Ask AI About This Data")
 if "messages" not in st.session_state:
     st.session_state.messages = []
 if "llm" not in st.session_state:
-    st.session_state.llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
+    try:
+        st.session_state.llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
+    except Exception as e:
+        st.session_state.llm = None
+        st.error(
+            "Could not initialize the Gemini chatbot. Check that GOOGLE_API_KEY is set "
+            f"correctly in your .env file. Details: {e}"
+        )
 
 # Clear chat history when the selected year changes, so old answers
 # don't stay on screen referring to a year that's no longer selected.
@@ -118,6 +132,10 @@ if prompt := st.chat_input("E.g., Which airline has the highest PLF?"):
         response = "Abhi database mein koi data nahi hai — pehle sidebar se kisi saal ka data fetch karo."
         st.chat_message("assistant").markdown(response)
         st.session_state.messages.append({"role": "assistant", "content": response})
+    elif st.session_state.llm is None:
+        response = "Chatbot abhi available nahi hai kyunki Gemini client initialize nahi ho paya. GOOGLE_API_KEY check karo."
+        st.chat_message("assistant").markdown(response)
+        st.session_state.messages.append({"role": "assistant", "content": response})
     else:
         try:
             # Uses the currently selected/filtered year, not the entire dataset
@@ -129,6 +147,11 @@ You are an expert aviation data analyst. Answer the user's query based ONLY on t
 
 Data Context (Year: {selected_year}):
 {context}
+
+Note: the data above may span multiple years (each row has a "year_period" column).
+When comparing or ranking airlines, always mention which year(s) your answer refers to.
+Do not sum or combine passenger counts across different years unless the user explicitly asks
+for a multi-year total. If the user's question is ambiguous about which year they mean, say so.
 
 User Query: {prompt}
 

@@ -67,8 +67,11 @@ python database.py
 5. **(Optional) Fetch new year data from the command line**
 
 ```bash
-python agent_scraper.py
+python agent_scraper.py            # fetches the default year (2024-25)
+python agent_scraper.py 2023-24    # or pass any year explicitly
 ```
+
+**Requires Python 3.10+** (for compatibility with recent LangChain/LangGraph releases).
 
 ## ⚠️ Notes
 
