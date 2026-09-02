@@ -4,3 +4,8 @@ __pycache__/
 daily_temp.pdf
 .streamlit/
 venv/
+
+# Uncomment the line below if you do NOT want the SQLite database committed
+# to the repo (e.g. it's regenerated locally via `python database.py` +
+# the scraper). Keep it commented if you want sample data to ship with the repo.
+# *.db

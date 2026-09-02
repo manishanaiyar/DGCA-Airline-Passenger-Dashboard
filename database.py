@@ -1,7 +1,10 @@
 import sqlite3
 
+DB_PATH = "dgca_dashboard.db"
+
+
 def create_database():
-    conn = sqlite3.connect('dgca_dashboard.db')
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('''
         CREATE TABLE IF NOT EXISTS aviation_data (
@@ -17,7 +20,8 @@ def create_database():
     ''')
     conn.commit()
     conn.close()
-    print("✅ Database schema created: dgca_dashboard.db")
+    print("✅ Database schema created:", DB_PATH)
+
 
 if __name__ == "__main__":
     create_database()

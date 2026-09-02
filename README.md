@@ -52,19 +52,19 @@ cp .env.example .env
 GOOGLE_API_KEY=your_google_api_key_here
 ```
 
-4. **Create the database schema**
-
-```bash
-python database.py
-```
-
-5. **Run the dashboard**
+4. **Run the dashboard**
 
 ```bash
 streamlit run app.py
 ```
 
-6. **(Optional) Fetch new year data from the command line**
+The database schema is created automatically on first run if `dgca_dashboard.db` doesn't exist yet — you don't need to run anything manually. If you prefer to create it explicitly (e.g. before running the scraper standalone), you can still do:
+
+```bash
+python database.py
+```
+
+5. **(Optional) Fetch new year data from the command line**
 
 ```bash
 python agent_scraper.py
@@ -74,4 +74,6 @@ python agent_scraper.py
 
 - Never commit your real `.env` file or API key — only `.env.example` is tracked.
 - The scraper depends on DGCA's S3 file naming convention (`HANDBOOK <year>.pdf`); if DGCA changes this, the download step will fail with a clear error.
-- LLM-parsed data goes through basic validation (non-empty airline name, non-negative passengers, PLF between 0–100) before being saved, but you should still spot-check results against the source PDF.
+- LLM-parsed data goes through validation (type checks, non-empty airline name, non-negative passengers, PLF between 0–100) before being saved, but you should still spot-check results against the source PDF.
+- Re-fetching a year that already exists in the database **updates** that year's rows (upsert) instead of silently ignoring the new data.
+- `requirements.txt` uses minimum-version pins (`>=`) for readability. For guaranteed reproducibility (e.g. before deploying), run `pip freeze > requirements.txt` in your working virtual environment and commit exact `==` versions instead.

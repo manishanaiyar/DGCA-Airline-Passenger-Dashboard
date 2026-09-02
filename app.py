@@ -1,18 +1,25 @@
+import os
 import streamlit as st
 import sqlite3
 import pandas as pd
 from langchain_google_genai import ChatGoogleGenerativeAI
 from dotenv import load_dotenv
 
+from database import DB_PATH, create_database
 from agent_scraper import app as scraper_app
 
 load_dotenv()
 st.set_page_config(page_title="DGCA AI Dashboard", layout="wide")
 
+# Auto-initialize the database on first run so a fresh clone doesn't need
+# the user to manually run `python database.py` before the UI is usable.
+if not os.path.exists(DB_PATH):
+    create_database()
+
 
 @st.cache_data
 def load_data():
-    conn = sqlite3.connect('dgca_dashboard.db')
+    conn = sqlite3.connect(DB_PATH)
     df = pd.read_sql_query("SELECT * FROM aviation_data", conn)
     conn.close()
     return df
@@ -21,8 +28,11 @@ def load_data():
 try:
     df = load_data()
 except Exception as e:
-    st.error(f"Database not found or unreadable. Run 'python database.py' first.\n\nDetails: {e}")
-    st.stop()
+    st.error(f"Could not read the database. Details: {e}")
+    df = pd.DataFrame(columns=[
+        "airline_name", "passengers_carried",
+        "yoy_growth_passengers", "plf_percent", "yoy_growth_plf", "year_period"
+    ])
 
 # --- ⚙️ FETCH NEW DATA DIRECTLY FROM UI ---
 st.sidebar.title("⚙️ Fetch Live Data")
@@ -59,6 +69,10 @@ else:
 
 # --- MAIN DASHBOARD ---
 st.title("✈️ DGCA Airline Passenger Dashboard")
+
+if df.empty:
+    st.info("Koi data nahi mila abhi. Sidebar mein saal daal ke 'Get Data' se pehla dataset fetch karo.")
+
 col1, col2 = st.columns(2)
 
 with col1:
@@ -89,12 +103,17 @@ if prompt := st.chat_input("E.g., Which airline has the highest PLF?"):
     st.session_state.messages.append({"role": "user", "content": prompt})
     st.chat_message("user").markdown(prompt)
 
-    try:
-        # Uses the currently selected/filtered year, not the entire dataset
-        context_df = filtered_df if not filtered_df.empty else df
-        context = context_df.to_string(index=False)
+    if df.empty:
+        response = "Abhi database mein koi data nahi hai — pehle sidebar se kisi saal ka data fetch karo."
+        st.chat_message("assistant").markdown(response)
+        st.session_state.messages.append({"role": "assistant", "content": response})
+    else:
+        try:
+            # Uses the currently selected/filtered year, not the entire dataset
+            context_df = filtered_df if not filtered_df.empty else df
+            context = context_df.to_string(index=False)
 
-        sys_prompt = f"""
+            sys_prompt = f"""
 You are an expert aviation data analyst. Answer the user's query based ONLY on this structured data.
 
 Data Context (Year: {selected_year}):
@@ -105,8 +124,8 @@ User Query: {prompt}
 Answer pointwise and keep it short. Use math symbols (+, -, %, =, >, <) where applicable.
 If the answer isn't in the data, say so clearly instead of guessing.
 """
-        response = st.session_state.llm.invoke(sys_prompt).content
-        st.chat_message("assistant").markdown(response)
-        st.session_state.messages.append({"role": "assistant", "content": response})
-    except Exception as e:
-        st.error(f"API Error: {e}")
+            response = st.session_state.llm.invoke(sys_prompt).content
+            st.chat_message("assistant").markdown(response)
+            st.session_state.messages.append({"role": "assistant", "content": response})
+        except Exception as e:
+            st.error(f"API Error: {e}")
