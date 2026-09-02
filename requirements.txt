@@ -1,7 +1,7 @@
-streamlit
-pandas
-langchain-google-genai
-python-dotenv
-pypdf
-langgraph
-requests
+streamlit>=1.42
+pandas>=2.0
+langchain-google-genai>=2.0
+python-dotenv>=1.0
+pypdf>=4.0
+langgraph>=0.2
+requests>=2.31
