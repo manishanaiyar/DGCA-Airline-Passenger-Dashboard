@@ -9,7 +9,7 @@ An end-to-end GenAI-powered dashboard and data pipeline that scrapes, parses, an
 
 ## 🧠 System Pipeline
 
-1. **Data Extraction:** Connects directly to DGCA's AWS S3 bucket to fetch the latest aviation statistics (PDF).
+1. **Data Extraction:** Fetches aviation statistics for a user-selected reporting year from DGCA's AWS S3 source (you enter the year, e.g. `2024-25`, in the sidebar).
 2. **AI Agent Parsing:** Utilizes Gemini (`gemini-2.5-flash`) to parse unstructured PDF text into clean, structured JSON format, with basic sanity validation before saving.
 3. **Database Storage:** Safely stores the extracted statistics into a lightweight SQLite database.
 4. **Dashboard UI:** A Streamlit frontend for dynamic data filtering and visualization.

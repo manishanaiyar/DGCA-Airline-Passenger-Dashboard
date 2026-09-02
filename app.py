@@ -1,4 +1,5 @@
 import os
+import re
 import streamlit as st
 import sqlite3
 import pandas as pd
@@ -41,6 +42,8 @@ new_year = st.sidebar.text_input("Enter Year (e.g., 2019-20)")
 if st.sidebar.button("Get Data"):
     if not new_year.strip():
         st.sidebar.warning("Please enter a year first.")
+    elif not re.fullmatch(r"\d{4}-\d{2}", new_year.strip()):
+        st.sidebar.error("Enter the year in format YYYY-YY, e.g. 2024-25")
     else:
         with st.spinner(f"AI Agent fetching {new_year} from DGCA S3..."):
             try:
@@ -95,6 +98,14 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 if "llm" not in st.session_state:
     st.session_state.llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
+
+# Clear chat history when the selected year changes, so old answers
+# don't stay on screen referring to a year that's no longer selected.
+if "last_selected_year" not in st.session_state:
+    st.session_state.last_selected_year = selected_year
+elif st.session_state.last_selected_year != selected_year:
+    st.session_state.messages = []
+    st.session_state.last_selected_year = selected_year
 
 for msg in st.session_state.messages:
     st.chat_message(msg["role"]).markdown(msg["content"])
